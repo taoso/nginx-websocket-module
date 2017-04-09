@@ -1,0 +1,1 @@
+# WebSocket Module for Nginx
