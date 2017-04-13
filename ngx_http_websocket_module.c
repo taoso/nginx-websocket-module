@@ -3,7 +3,15 @@
 #include <ngx_http.h>
 #include <ngx_crypt.h>
 #include <ngx_sha1.h>
+#include <wslay/wslay.h>
 
+
+struct ngx_http_ws_ctx_s {
+    ngx_http_request_t *r;
+    wslay_event_context_ptr *ws;
+};
+
+typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
 
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
@@ -106,8 +114,7 @@ u_char *ngx_http_websocket_build_accept_key(ngx_table_elt_t *key_header, ngx_htt
 
     encoded.len = ngx_base64_encoded_length(decoded.len) + 1;
     encoded.data = ngx_pnalloc(r->pool, encoded.len);
-    memset(encoded.data, 0, encoded.len);
-    encoded.data[encoded.len] = (u_char)'\0';
+    ngx_memzero(encoded.data, encoded.len);
     if (encoded.data == NULL) {
         return NULL;
     }
@@ -115,6 +122,135 @@ u_char *ngx_http_websocket_build_accept_key(ngx_table_elt_t *key_header, ngx_htt
     ngx_encode_base64(&encoded, &decoded);
 
     return encoded.data;
+}
+
+void
+ngx_http_websocket_read(ngx_http_request_t *r)
+{
+    int                n;
+    char               buf[1];
+    ngx_err_t          err;
+    ngx_event_t       *rev;
+    ngx_connection_t  *c;
+
+    c = r->connection;
+    rev = c->read;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http websocket test reading");
+
+    n = recv(c->fd, buf, 1, MSG_PEEK);
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0, "http websocket readed %d bytes", n);
+
+    if (n == 0) {
+        rev->eof = 1;
+        c->error = 1;
+        err = 0;
+
+        goto closed;
+
+    } else if (n == -1) {
+        err = ngx_socket_errno;
+
+        if (err != NGX_EAGAIN) {
+            rev->eof = 1;
+            c->error = 1;
+
+            goto closed;
+        }
+    }
+
+    return;
+
+closed:
+
+    if (err) {
+        rev->error = 1;
+    }
+
+    ngx_log_error(NGX_LOG_INFO, c->log, err,
+                  "client prematurely closed connection");
+
+    ngx_http_finalize_request(r, NGX_HTTP_CLIENT_CLOSED_REQUEST);
+}
+
+static ssize_t
+recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
+        int flags, void *user_data)
+{
+    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+    ngx_connection_t  *c = r->connection;
+
+    ssize_t n = recv(c->fd, buf, len, 0);
+    if(n == -1) {
+        if(errno == EAGAIN || errno == EWOULDBLOCK) {
+            wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+        } else {
+            wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        }
+    } else if(n == 0) {
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+
+        n = -1;
+    }
+
+    return n;
+}
+
+static ssize_t
+send_callback(wslay_event_context_ptr ctx,
+        const uint8_t *data, size_t len, int flags, void *user_data)
+{
+    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+    ngx_connection_t  *c = r->connection;
+
+    ssize_t n = send(c->fd, data, len, 0);
+    if(n == -1) {
+        if(errno == EAGAIN || errno == EWOULDBLOCK) {
+            wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+        } else {
+            wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        }
+    }
+
+    return n;
+}
+
+void
+on_msg_recv_callback(wslay_event_context_ptr ctx,
+        const struct wslay_event_on_msg_recv_arg *arg, void *user_data)
+{
+    if(!wslay_is_ctrl_frame(arg->opcode)) {
+        struct wslay_event_msg msgarg = {
+            arg->opcode, arg->msg, arg->msg_length
+        };
+        wslay_event_queue_msg(ctx, &msgarg);
+    }
+}
+
+static struct wslay_event_callbacks callbacks = {
+    recv_callback,
+    send_callback,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    on_msg_recv_callback
+};
+
+static void
+ngx_http_ws_event_handler(ngx_http_request_t *r)
+{
+    ngx_connection_t *c = r->connection;
+    wslay_event_context_ptr ctx = (wslay_event_context_ptr) r->upstream;
+
+    if (c->read->ready) {
+        wslay_event_recv(ctx);
+    }
+
+    if (c->write->ready) {
+        wslay_event_send(ctx);
+    }
 }
 
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
@@ -143,10 +279,24 @@ static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
     add_header("Upgrade", "websocket");
     add_header("Sec-WebSocket-Version", "13");
 
-    r->read_event_handler = ngx_http_test_reading;
+    wslay_event_context_ptr ctx = ngx_pnalloc(r->pool, sizeof(wslay_event_context_ptr));
+
+    wslay_event_context_server_init(&ctx, &callbacks, r);
+
+    r->read_event_handler = ngx_http_ws_event_handler;
+    r->upstream = (ngx_http_upstream_t *) ctx;
 
     ngx_http_send_header(r);
-    return ngx_http_send_special(r, NGX_HTTP_FLUSH);
+    ngx_http_send_special(r, NGX_HTTP_FLUSH);
+
+    struct wslay_event_msg msgarg = {
+        WSLAY_TEXT_FRAME, (uint8_t *)"hehe", 4
+    };
+
+    wslay_event_queue_msg(ctx, &msgarg);
+    wslay_event_send(ctx);
+
+    return NGX_OK;
 }
 
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
