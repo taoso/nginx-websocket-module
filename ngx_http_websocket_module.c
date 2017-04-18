@@ -15,6 +15,7 @@ typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
 
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_websocket_process_init(ngx_cycle_t *cycle);
 
 static ngx_command_t ngx_http_websocket_commands[] = {
 
@@ -50,7 +51,7 @@ ngx_module_t ngx_http_websocket_module = {
     NGX_HTTP_MODULE,                /* module type */
     NULL,                           /* init master */
     NULL,                           /* init module */
-    NULL,                           /* init process */
+    ngx_http_websocket_process_init,/* init process */
     NULL,                           /* init thread */
     NULL,                           /* exit thread */
     NULL,                           /* exit process */
@@ -226,6 +227,48 @@ on_msg_recv_callback(wslay_event_context_ptr ctx,
         };
         wslay_event_queue_msg(ctx, &msgarg);
     }
+}
+
+static ngx_int_t
+ngx_http_websocket_process_init(ngx_cycle_t *cycle)
+{
+    int status;
+    struct addrinfo hints = {};
+    struct addrinfo *res, *p;
+    char ipstr[33];
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char hostname[1024];
+    hostname[1023] = '\0';
+    gethostname(hostname, sizeof(hostname));
+
+    if ((status = getaddrinfo(hostname, NULL, &hints, &res)) != 0) {
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", gai_strerror(status));
+    }
+
+    for (p = res; p != NULL; p = p->ai_next) {
+        struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
+        inet_ntop(p->ai_family, (void *)&ip->sin_addr, ipstr, sizeof(ipstr));
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", ipstr);
+
+        int listen_fd = socket(PF_INET, SOCK_STREAM, 0);
+
+        if (bind(listen_fd, (struct sockaddr *)ip, sizeof(struct sockaddr_in)) == -1) {
+            return NGX_ABORT;
+        }
+
+        struct sockaddr_in addr;
+        socklen_t addr_len = sizeof(struct sockaddr_in);
+        if (getsockname(listen_fd, (struct sockaddr *) &addr, &addr_len) == -1) {
+            return NGX_ABORT;
+        }
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s:%d", ipstr, ntohs(addr.sin_port));
+    }
+
+    freeaddrinfo(res);
+
+    return NGX_OK;
 }
 
 static struct wslay_event_callbacks callbacks = {
