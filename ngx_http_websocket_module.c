@@ -30,6 +30,8 @@ static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_websocket_process_init(ngx_cycle_t *cycle);
+static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
+static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
 
 static ngx_command_t ngx_http_websocket_commands[] = {
 
@@ -400,6 +402,80 @@ ngx_http_ws_event_handler(ngx_http_request_t *r)
 }
 
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
+{
+    if (r->method & NGX_HTTP_GET) {
+        return ngx_http_ws_handshake(r);
+    } else if (r->method & NGX_HTTP_POST) {
+        return ngx_http_ws_push(r);
+    } else if (r->method & NGX_HTTP_OPTIONS) {
+        // TODO add allow methods
+        return NGX_HTTP_NO_CONTENT;
+    } else {
+        return NGX_HTTP_NOT_ALLOWED;
+    }
+}
+
+static void
+ngx_http_ws_push_body_handler(ngx_http_request_t *r)
+{
+    if (r->request_body == NULL) {
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    // TODO iterate bufs
+    // TODO process temp_file
+    ngx_buf_t *buf = r->request_body->bufs->buf;
+    printf("###:%.*s\n", (int)(buf->last - buf->pos), buf->pos);
+
+    ngx_str_t user = r->headers_in.user;
+    ngx_http_request_t *wsr = (ngx_http_request_t *) ngx_hextoi((u_char *)(user.data + 2), (size_t)user.len - 2);
+    ngx_http_ws_ctx_t *t;
+    HASH_FIND_PTR(ws_ctx_hash, &wsr, t);
+    if (t == NULL) {
+        return;
+    }
+
+    struct wslay_event_msg wsmsg = {
+        // TODO process binary data
+        WSLAY_TEXT_FRAME, buf->pos, buf->last - buf->pos
+    };
+    wslay_event_queue_msg(t->ws, &wsmsg);
+    wslay_event_send(t->ws);
+
+    ngx_http_finalize_request(r, NGX_HTTP_NO_CONTENT);
+}
+
+static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r)
+{
+    ngx_int_t rc = ngx_http_auth_basic_user(r);
+    if (rc == NGX_ERROR) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ngx_str_t user = r->headers_in.user;
+    if (user.len == 0) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    // skip the leading 0x
+    ngx_http_request_t *wsr = (ngx_http_request_t *) ngx_hextoi((u_char *)(user.data + 2), (size_t)user.len - 2);
+
+    ngx_http_ws_ctx_t *t;
+    HASH_FIND_PTR(ws_ctx_hash, &wsr, t);
+    if (t == NULL) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    rc = ngx_http_read_client_request_body(r, ngx_http_ws_push_body_handler);
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+        return rc;
+    }
+
+    return NGX_DONE;
+}
+
+static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
 {
     r->count++;
     r->keepalive = 0;
