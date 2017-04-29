@@ -4,19 +4,32 @@
 #include <ngx_crypt.h>
 #include <ngx_sha1.h>
 #include <wslay/wslay.h>
+#include "uthash.h"
 
 
 struct ngx_http_ws_ctx_s {
     ngx_http_request_t *r;
-    wslay_event_context_ptr *ws;
+    wslay_event_context_ptr ws;
+    UT_hash_handle hh;
 };
 
 typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
 
+ngx_http_ws_ctx_t *ws_ctx_hash = NULL;
+
+struct ngx_http_ws_srv_addr_s {
+    void *cscf; /** ngx_http_core_srv_conf_t **/
+    ngx_str_t addr_text;
+    UT_hash_handle hh;
+};
+
+typedef struct ngx_http_ws_srv_addr_s ngx_http_ws_srv_addr_t;
+
+static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
+
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_websocket_process_init(ngx_cycle_t *cycle);
-static ngx_http_core_srv_conf_t *ws_cscf;
 
 static ngx_command_t ngx_http_websocket_commands[] = {
 
@@ -184,13 +197,13 @@ recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
     ngx_connection_t  *c = r->connection;
 
     ssize_t n = recv(c->fd, buf, len, 0);
-    if(n == -1) {
+    if (n == -1) {
         if(errno == EAGAIN || errno == EWOULDBLOCK) {
             wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
         } else {
             wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
         }
-    } else if(n == 0) {
+    } else if (n == 0) {
         wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
 
         n = -1;
@@ -207,7 +220,7 @@ send_callback(wslay_event_context_ptr ctx,
     ngx_connection_t  *c = r->connection;
 
     ssize_t n = send(c->fd, data, len, 0);
-    if(n == -1) {
+    if (n == -1) {
         if(errno == EAGAIN || errno == EWOULDBLOCK) {
             wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
         } else {
@@ -222,11 +235,24 @@ void
 on_msg_recv_callback(wslay_event_context_ptr ctx,
         const struct wslay_event_on_msg_recv_arg *arg, void *user_data)
 {
+    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+
     if(!wslay_is_ctrl_frame(arg->opcode)) {
         struct wslay_event_msg msgarg = {
             arg->opcode, arg->msg, arg->msg_length
         };
         wslay_event_queue_msg(ctx, &msgarg);
+    } else if (arg->opcode & WSLAY_CONNECTION_CLOSE) {
+        ngx_http_ws_ctx_t *t;
+        HASH_FIND_PTR(ws_ctx_hash, &r, t);
+
+        if (t) {
+            printf("%p\n", t);
+            HASH_DEL(ws_ctx_hash, t);
+        }
+
+        r->count = 1;
+        ngx_http_finalize_request(r, NGX_DONE);
     }
 }
 
@@ -248,10 +274,13 @@ ngx_http_websocket_process_init(ngx_cycle_t *cycle)
         ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", gai_strerror(status));
     }
 
-    for (p = res; p != NULL; p = p->ai_next) {
+    ngx_http_ws_srv_addr_t *s;
+    for (s = ws_srv_addr_hash; s != NULL; s = s->hh.next) {
+        printf(">>>:%p\n", s->cscf);
+        p = res;
+
         struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
         inet_ntop(p->ai_family, (void *)&ip->sin_addr, ipstr, sizeof(ipstr));
-        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", ipstr);
 
         int listen_fd = socket(PF_INET, SOCK_STREAM, 0);
 
@@ -296,9 +325,10 @@ ngx_http_websocket_process_init(ngx_cycle_t *cycle)
         (void) ngx_sock_ntop(&lsopt.sockaddr.sockaddr, lsopt.socklen,
                 lsopt.addr, NGX_SOCKADDR_STRLEN, 1);
 
-        if (ngx_http_add_listen(&conf, ws_cscf, &lsopt) != NGX_OK) {
+        if (ngx_http_add_listen(&conf, s->cscf, &lsopt) != NGX_OK) {
             return NGX_ABORT;
         }
+
         ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf((&conf), ngx_http_core_module);
         ngx_http_conf_port_t *port = cmcf->ports->elts;
         port += cmcf->ports->nelts - 1;
@@ -326,6 +356,7 @@ ngx_http_websocket_process_init(ngx_cycle_t *cycle)
         rev->accept = 1;
         rev->handler = ngx_event_accept;
         printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
+        s->addr_text = ls->addr_text;
 
         if (listen(ls->fd, NGX_LISTEN_BACKLOG) != 0) {
             return NGX_ERROR;
@@ -370,7 +401,8 @@ ngx_http_ws_event_handler(ngx_http_request_t *r)
 
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
 {
-    r->main->count++;
+    r->count++;
+    r->keepalive = 0;
 
     ngx_table_elt_t* h;
 
@@ -404,8 +436,23 @@ static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
     ngx_http_send_header(r);
     ngx_http_send_special(r, NGX_HTTP_FLUSH);
 
+    ngx_http_ws_ctx_t *t = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
+    t->r = r;
+    t->ws = ctx;
+    HASH_ADD_PTR(ws_ctx_hash, r, t);
+
+    ngx_http_core_srv_conf_t *cscf = r->srv_conf[ngx_http_core_module.ctx_index];
+    ngx_http_core_loc_conf_t *clcf = r->loc_conf[ngx_http_core_module.ctx_index];
+
+    ngx_http_ws_srv_addr_t *push_addr;
+    HASH_FIND_PTR(ws_srv_addr_hash, &cscf, push_addr);
+
+    char msg_buf[256];
+    int msg_buf_len = sprintf(msg_buf, "http://%p@%.*s%.*s", r,
+            (int)push_addr->addr_text.len, push_addr->addr_text.data,
+            (int)clcf->name.len, clcf->name.data);
     struct wslay_event_msg msgarg = {
-        WSLAY_TEXT_FRAME, (uint8_t *)"hehe", 4
+        WSLAY_TEXT_FRAME, (uint8_t *)msg_buf, msg_buf_len
     };
 
     wslay_event_queue_msg(ctx, &msgarg);
@@ -422,7 +469,10 @@ static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_websocket_handler;
 
-    ws_cscf = cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
+    cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
+    ngx_http_ws_srv_addr_t *srv_addr = ngx_pnalloc(cf->pool, sizeof(ngx_http_ws_srv_addr_t));
+    srv_addr->cscf = cscf;
+    HASH_ADD_PTR(ws_srv_addr_hash, cscf, srv_addr);
 
     return NGX_CONF_OK;
 }
