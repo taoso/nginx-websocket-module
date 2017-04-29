@@ -16,6 +16,7 @@ typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_websocket_process_init(ngx_cycle_t *cycle);
+static ngx_http_core_srv_conf_t *ws_cscf;
 
 static ngx_command_t ngx_http_websocket_commands[] = {
 
@@ -264,6 +265,77 @@ ngx_http_websocket_process_init(ngx_cycle_t *cycle)
             return NGX_ABORT;
         }
         ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s:%d", ipstr, ntohs(addr.sin_port));
+
+        // ngx_conf_t
+        ngx_conf_t conf;
+        ngx_memzero(&conf, sizeof(ngx_conf_t));
+
+        conf.temp_pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, cycle->log);
+        if (conf.temp_pool == NULL) {
+            return NGX_ABORT;
+        }
+
+        conf.ctx = cycle->conf_ctx[ngx_http_module.index];
+        conf.cycle = cycle;
+        conf.pool = cycle->pool;
+        conf.log = cycle->log;
+        // lsopt
+        ngx_http_listen_opt_t lsopt;
+        ngx_memzero(&lsopt, sizeof(ngx_http_listen_opt_t));
+
+        struct sockaddr_in *sin = &lsopt.sockaddr.sockaddr_in;
+        *sin = addr;
+
+        lsopt.socklen = sizeof(struct sockaddr_in);
+
+        lsopt.backlog = NGX_LISTEN_BACKLOG;
+        lsopt.rcvbuf = -1;
+        lsopt.sndbuf = -1;
+        lsopt.wildcard = 0;
+
+        (void) ngx_sock_ntop(&lsopt.sockaddr.sockaddr, lsopt.socklen,
+                lsopt.addr, NGX_SOCKADDR_STRLEN, 1);
+
+        if (ngx_http_add_listen(&conf, ws_cscf, &lsopt) != NGX_OK) {
+            return NGX_ABORT;
+        }
+        ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf((&conf), ngx_http_core_module);
+        ngx_http_conf_port_t *port = cmcf->ports->elts;
+        port += cmcf->ports->nelts - 1;
+        ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "port %d", port->port);
+
+        ngx_http_init_listening(&conf, port);
+        ngx_listening_t *ls = cycle->listening.elts;
+        ls += cycle->listening.nelts - 1;
+        ls->fd = listen_fd;
+
+        ngx_connection_t *c = ngx_get_connection(ls->fd, cycle->log);
+        if (c == NULL) {
+            return NGX_ERROR;
+        }
+
+        c->type = ls->type;
+        c->log = &ls->log;
+
+        c->listening = ls;
+        ls->connection = c;
+
+        ngx_event_t *rev = c->read;
+
+        rev->log = c->log;
+        rev->accept = 1;
+        rev->handler = ngx_event_accept;
+        printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
+
+        if (listen(ls->fd, NGX_LISTEN_BACKLOG) != 0) {
+            return NGX_ERROR;
+        }
+
+        if (ngx_add_event(rev, NGX_READ_EVENT, 0) == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+
+        ngx_destroy_pool(conf.temp_pool);
     }
 
     freeaddrinfo(res);
@@ -345,9 +417,12 @@ static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
 static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_core_loc_conf_t *clcf;
+    ngx_http_core_srv_conf_t *cscf;
 
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_websocket_handler;
+
+    ws_cscf = cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
 
     return NGX_CONF_OK;
 }
