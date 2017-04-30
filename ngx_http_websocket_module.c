@@ -24,7 +24,8 @@ struct ngx_http_ws_ctx_s {
 
 struct ngx_http_ws_srv_addr_s {
     void *cscf; /** ngx_http_core_srv_conf_t **/
-    ngx_str_t addr_text;
+    struct addrinfo *addrs;
+    int port;
     UT_hash_handle hh;
 };
 
@@ -265,8 +266,9 @@ ngx_http_ws_get_addrinfo(ngx_cycle_t *cycle)
     struct addrinfo hints = {};
     struct addrinfo *res = NULL;
 
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_INET; /* TODO support IPv6 */
     hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
 
     char hostname[cycle->hostname.len + 1];
     hostname[cycle->hostname.len] = '\0';
@@ -286,27 +288,26 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
 
     ngx_http_ws_srv_addr_t *s;
     for (s = ws_srv_addr_hash; s != NULL; s = s->hh.next) {
-        /* TODO support multi listen addr */
         ngx_int_t rc = ngx_http_ws_add_push_listen(cycle, s, res);
         if (rc != NGX_OK) {
-            freeaddrinfo(res);
             return rc;
         }
     }
-
-    freeaddrinfo(res);
 
     return NGX_OK;
 }
 
 static ngx_socket_t
-ngx_http_ws_alloc_push_listenfd(struct addrinfo *p)
+ngx_http_ws_alloc_push_listenfd()
 {
-    struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
+    struct sockaddr_in any;
+    any.sin_family = AF_INET;
+    any.sin_port = htons(0); /* let os choose port */
+    any.sin_addr.s_addr = INADDR_ANY;
 
     ngx_socket_t listen_fd = socket(PF_INET, SOCK_STREAM, 0);
 
-    if (bind(listen_fd, (struct sockaddr *)ip, sizeof(struct sockaddr_in)) == -1) {
+    if (bind(listen_fd, (struct sockaddr *)&any, sizeof(struct sockaddr_in)) == -1) {
         return 0;
     }
 
@@ -341,7 +342,7 @@ ngx_http_ws_init_lsopt(ngx_http_listen_opt_t *lsopt, ngx_socket_t listen_fd)
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(struct sockaddr_in);
     if (getsockname(listen_fd, (struct sockaddr *) &addr, &addr_len) == -1) {
-        return NGX_ABORT;
+        return 0;
     }
 
     ngx_memzero(lsopt, sizeof(ngx_http_listen_opt_t));
@@ -354,12 +355,12 @@ ngx_http_ws_init_lsopt(ngx_http_listen_opt_t *lsopt, ngx_socket_t listen_fd)
     lsopt->backlog = NGX_LISTEN_BACKLOG;
     lsopt->rcvbuf = -1;
     lsopt->sndbuf = -1;
-    lsopt->wildcard = 0;
+    lsopt->wildcard = 1;
 
     (void) ngx_sock_ntop(&lsopt->sockaddr.sockaddr, lsopt->socklen,
             lsopt->addr, NGX_SOCKADDR_STRLEN, 1);
 
-    return NGX_OK;
+    return ntohs(addr.sin_port);
 }
 
 static ngx_listening_t *
@@ -373,8 +374,6 @@ ngx_http_ws_add_listening(ngx_cycle_t *cycle, ngx_conf_t conf, ngx_socket_t fd)
     ngx_listening_t *ls = cycle->listening.elts;
     ls += cycle->listening.nelts - 1;
     ls->fd = fd;
-
-    printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
 
     return ls;
 }
@@ -406,7 +405,7 @@ static ngx_int_t
 ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
         struct addrinfo *p)
 {
-    ngx_socket_t listen_fd = ngx_http_ws_alloc_push_listenfd(p);
+    ngx_socket_t listen_fd = ngx_http_ws_alloc_push_listenfd();
     if (listen_fd == 0) {
         return NGX_ABORT;
     }
@@ -418,7 +417,8 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
     }
 
     ngx_http_listen_opt_t lsopt;
-    if (ngx_http_ws_init_lsopt(&lsopt, listen_fd) != NGX_OK) {
+    ngx_int_t port = ngx_http_ws_init_lsopt(&lsopt, listen_fd);
+    if (port == 0) {
         return NGX_ABORT;
     }
 
@@ -432,7 +432,9 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
     }
 
     ngx_listening_t *ls = ngx_http_ws_add_listening(cycle, conf, listen_fd);
-    s->addr_text = ls->addr_text;
+
+    s->addrs = p;
+    s->port = port;
 
     ngx_int_t rc = ngx_http_ws_add_listen_event(cycle, ls);
 
@@ -645,12 +647,23 @@ ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t)
     ngx_http_ws_srv_addr_t *push_addr;
     HASH_FIND_PTR(ws_srv_addr_hash, &cscf, push_addr);
 
-    char msg_buf[256];
-    int msg_buf_len = sprintf(msg_buf, "http://%d@%.*s%.*s", r->connection->fd,
-            (int)push_addr->addr_text.len, push_addr->addr_text.data,
-            (int)clcf->name.len, clcf->name.data);
+    char token_buf[256], tokens_buf[4096], *bufp;
+    bufp = tokens_buf;
+
+    for (struct addrinfo *p = push_addr->addrs; p != NULL; p = p->ai_next) {
+        void *addr;
+        char ipstr[INET6_ADDRSTRLEN];
+        struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
+        addr = &ip->sin_addr;
+        inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
+        sprintf(token_buf, "http://%d@%s:%d%.*s",
+                r->connection->fd, ipstr, push_addr->port,
+                (int)clcf->name.len, clcf->name.data);
+        bufp += sprintf(bufp, "%s,", token_buf);
+    }
+
     struct wslay_event_msg msgarg = {
-        WSLAY_TEXT_FRAME, (uint8_t *)msg_buf, msg_buf_len
+        WSLAY_TEXT_FRAME, (uint8_t *)tokens_buf, bufp - tokens_buf - 1
     };
 
     wslay_event_queue_msg(ctx, &msgarg);
