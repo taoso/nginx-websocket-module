@@ -43,6 +43,7 @@ static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_process_init(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
+static ngx_int_t ngx_http_ws_send_handshake(ngx_http_request_t *r);
 static void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t);
@@ -506,6 +507,19 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     r->count++; /* prevent nginx close connection after upgrade */
     r->keepalive = 0;
 
+    ngx_http_ws_send_handshake(r); /* TODO check send error */
+
+    ngx_http_ws_ctx_t *t = ngx_http_ws_init_ctx(r);
+
+    ngx_http_ws_send_push_token(t);
+    ngx_http_ws_add_timer(t);
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_ws_send_handshake(ngx_http_request_t *r)
+{
     ngx_table_elt_t* h;
 
     ngx_table_elt_t *key_header = ngx_http_ws_find_key_header(r);
@@ -519,7 +533,6 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
 
         add_header("Sec-WebSocket-Accept", accept);
     }
-    /* ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "foo %d", key_header->value.len); */
 
     r->headers_out.status = NGX_HTTP_SWITCHING_PROTOCOLS;
     r->headers_out.status_line.data = (u_char *) "101 Switching Protocols";
@@ -529,14 +542,8 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     add_header("Sec-WebSocket-Version", "13");
 
     ngx_http_send_header(r);
-    ngx_http_send_special(r, NGX_HTTP_FLUSH);
 
-    ngx_http_ws_ctx_t *t = ngx_http_ws_init_ctx(r);
-
-    ngx_http_ws_send_push_token(t);
-    ngx_http_ws_add_timer(t);
-
-    return NGX_OK;
+    return ngx_http_send_special(r, NGX_HTTP_FLUSH);
 }
 
 static ngx_http_ws_ctx_t *
