@@ -302,16 +302,29 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
     return NGX_OK;
 }
 
+static ngx_socket_t
+ngx_http_ws_alloc_push_listenfd(struct addrinfo *p)
+{
+    struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
+
+    ngx_socket_t listen_fd = socket(PF_INET, SOCK_STREAM, 0);
+
+    if (bind(listen_fd, (struct sockaddr *)ip, sizeof(struct sockaddr_in)) == -1) {
+        return 0;
+    }
+
+    if (listen(listen_fd, NGX_LISTEN_BACKLOG) != 0) {
+        return 0;
+    }
+
+    return listen_fd;
+}
+
 static ngx_int_t
 ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s, struct addrinfo *p)
 {
-    char ipstr[33];
-    struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
-    inet_ntop(p->ai_family, (void *)&ip->sin_addr, ipstr, sizeof(ipstr));
-
-    int listen_fd = socket(PF_INET, SOCK_STREAM, 0);
-
-    if (bind(listen_fd, (struct sockaddr *)ip, sizeof(struct sockaddr_in)) == -1) {
+    ngx_socket_t listen_fd = ngx_http_ws_alloc_push_listenfd(p);
+    if (listen_fd == 0) {
         return NGX_ABORT;
     }
 
@@ -320,7 +333,6 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s, struc
     if (getsockname(listen_fd, (struct sockaddr *) &addr, &addr_len) == -1) {
         return NGX_ABORT;
     }
-    ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s:%d", ipstr, ntohs(addr.sin_port));
 
     // ngx_conf_t
     ngx_conf_t conf;
@@ -384,10 +396,6 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s, struc
     rev->handler = ngx_event_accept;
     printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
     s->addr_text = ls->addr_text;
-
-    if (listen(ls->fd, NGX_LISTEN_BACKLOG) != 0) {
-        return NGX_ERROR;
-    }
 
     if (ngx_add_event(rev, NGX_READ_EVENT, 0) == NGX_ERROR) {
         return NGX_ERROR;
