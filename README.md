@@ -44,12 +44,15 @@ are millisecond. If not set, the default value of pingintvl is 5 minute and
 idleintvl 6 minute.
 
 Then you can make a websocket handshake to nginx. Once the handshake finished,
-nginx will send an text message reads `http://0x7fcacc004450@172.16.71.169:50237/ws`.
+nginx will send an text message reads
+`http://12@172.16.71.231:48775/ws,http://12@172.16.71.211:48775/ws`.
 You can post message to this url by httpie like:
 ```
-echo 123|http post http://0x7fcacc004450@172.16.71.169:50237/ws
+echo 123|http http://12@172.16.71.231:48775/ws
 ```
 
 ## todo
-- process upstream message
-- debug log
+- [ ] ipv6
+- [ ] more debug log
+- [ ] push binary data
+- [ ] process upstream message
