@@ -39,9 +39,15 @@ location /ws {
 
 The config above will make nginx listen websocket request on the `/ws` path.
 The `pingintvl` arg is used to set the interval to send ping message to the
-client. And the `idleintvl` arg is used to detect client timeout. Both units
-are millisecond. If not set, the default value of pingintvl is 5 minute and
-idleintvl 6 minute.
+client. And the `idleintvl` arg is used to detect client timeout. If there is 
+no message send or receive after `pingintvl`, nginx will send a `PING`,
+message and the client will ack the `PONG` message, which will reset the ping
+timer. If ther is no message send or receive after `idleintvl`, nginx will
+just close the connection. Both units are millisecond. If not set, the default
+value of pingintvl is 5 minute and idleintvl 6 minute.
+
+But why let server send the `PING` message? It is because that the browser does
+not offer the api to ping server for javascript.
 
 Then you can make a websocket handshake to nginx. Once the handshake finished,
 nginx will send an text message reads
