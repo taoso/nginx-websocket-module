@@ -1,0 +1,35 @@
+diff --git a/src/http/ngx_http.c b/src/http/ngx_http.c
+index c036389..9bc71e3 100644
+--- a/src/http/ngx_http.c
++++ b/src/http/ngx_http.c
+@@ -55,8 +55,6 @@ static ngx_int_t ngx_http_cmp_conf_addrs(const void *one, const void *two);
+ static int ngx_libc_cdecl ngx_http_cmp_dns_wildcards(const void *one,
+     const void *two);
+ 
+-static ngx_int_t ngx_http_init_listening(ngx_conf_t *cf,
+-    ngx_http_conf_port_t *port);
+ static ngx_listening_t *ngx_http_add_listening(ngx_conf_t *cf,
+     ngx_http_conf_addr_t *addr);
+ static ngx_int_t ngx_http_add_addrs(ngx_conf_t *cf, ngx_http_port_t *hport,
+@@ -1623,7 +1621,7 @@ ngx_http_cmp_dns_wildcards(const void *one, const void *two)
+ }
+ 
+ 
+-static ngx_int_t
++ngx_int_t
+ ngx_http_init_listening(ngx_conf_t *cf, ngx_http_conf_port_t *port)
+ {
+     ngx_uint_t                 i, last, bind_wildcard;
+diff --git a/src/http/ngx_http.h b/src/http/ngx_http.h
+index afab4f6..fac9355 100644
+--- a/src/http/ngx_http.h
++++ b/src/http/ngx_http.h
+@@ -80,6 +80,8 @@ ngx_int_t ngx_http_add_location(ngx_conf_t *cf, ngx_queue_t **locations,
+     ngx_http_core_loc_conf_t *clcf);
+ ngx_int_t ngx_http_add_listen(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
+     ngx_http_listen_opt_t *lsopt);
++ngx_int_t
++ngx_http_init_listening(ngx_conf_t *cf, ngx_http_conf_port_t *port);
+ 
+ 
+ void ngx_http_init_connection(ngx_connection_t *c);
