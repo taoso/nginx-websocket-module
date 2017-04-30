@@ -259,13 +259,13 @@ ngx_http_ws_close(ngx_http_ws_ctx_t *t)
     ngx_http_finalize_request(r, NGX_DONE);
 }
 
-static ngx_int_t
-ngx_http_ws_process_init(ngx_cycle_t *cycle)
+static struct addrinfo *
+ngx_http_ws_get_addrinfo(ngx_cycle_t *cycle)
 {
     int status;
     struct addrinfo hints = {};
-    struct addrinfo *res, *p;
-    char ipstr[33];
+    struct addrinfo *res = NULL;
+
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
@@ -277,10 +277,20 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
         ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", gai_strerror(status));
     }
 
+    return res;
+}
+
+static ngx_int_t
+ngx_http_ws_process_init(ngx_cycle_t *cycle)
+{
+    struct addrinfo *res, *p;
+    char ipstr[33];
+
+    res = ngx_http_ws_get_addrinfo(cycle);
+
     ngx_http_ws_srv_addr_t *s;
     for (s = ws_srv_addr_hash; s != NULL; s = s->hh.next) {
-        printf(">>>:%p\n", s->cscf);
-        p = res;
+        p = res; /* TODO support multi listen addr */
 
         struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
         inet_ntop(p->ai_family, (void *)&ip->sin_addr, ipstr, sizeof(ipstr));
@@ -409,7 +419,7 @@ static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r)
     } else if (r->method & NGX_HTTP_POST) {
         return ngx_http_ws_push(r);
     } else if (r->method & NGX_HTTP_OPTIONS) {
-        // TODO add allow methods
+        /* TODO add allow methods */
         return NGX_HTTP_NO_CONTENT;
     } else {
         return NGX_HTTP_NOT_ALLOWED;
@@ -424,8 +434,8 @@ ngx_http_ws_push_body_handler(ngx_http_request_t *r)
         return;
     }
 
-    // TODO iterate bufs
-    // TODO process temp_file
+    /* TODO iterate bufs */
+    /* TODO process temp_file */
     ngx_buf_t *buf = r->request_body->bufs->buf;
     printf("###:%.*s\n", (int)(buf->last - buf->pos), buf->pos);
 
@@ -438,7 +448,7 @@ ngx_http_ws_push_body_handler(ngx_http_request_t *r)
     }
 
     struct wslay_event_msg wsmsg = {
-        // TODO process binary data
+        /* TODO process binary data */
         WSLAY_TEXT_FRAME, buf->pos, buf->last - buf->pos
     };
     wslay_event_queue_msg(t->ws, &wsmsg);
@@ -460,7 +470,7 @@ ngx_http_ws_push(ngx_http_request_t *r)
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    // skip the leading 0x
+    /* skip the leading 0x */
     ngx_http_request_t *wsr = (ngx_http_request_t *) ngx_hextoi((u_char *)(user.data + 2), (size_t)user.len - 2);
 
     ngx_http_ws_ctx_t *t;
