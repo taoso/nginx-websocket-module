@@ -365,6 +365,46 @@ ngx_http_ws_init_lsopt(ngx_http_listen_opt_t *lsopt, ngx_socket_t listen_fd)
     return NGX_OK;
 }
 
+static ngx_listening_t *
+ngx_http_ws_add_listening(ngx_cycle_t *cycle, ngx_conf_t conf, ngx_socket_t fd)
+{
+    ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf((&conf), ngx_http_core_module);
+    ngx_http_conf_port_t *port = cmcf->ports->elts;
+    port += cmcf->ports->nelts - 1;
+
+    ngx_http_init_listening(&conf, port);
+    ngx_listening_t *ls = cycle->listening.elts;
+    ls += cycle->listening.nelts - 1;
+    ls->fd = fd;
+
+    printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
+
+    return ls;
+}
+
+static ngx_int_t
+ngx_http_ws_add_listen_event(ngx_cycle_t *cycle, ngx_listening_t *ls)
+{
+    ngx_connection_t *c = ngx_get_connection(ls->fd, cycle->log);
+    if (c == NULL) {
+        return NGX_ABORT;
+    }
+
+    c->type = ls->type;
+    c->log = &ls->log;
+
+    c->listening = ls;
+    ls->connection = c;
+
+    ngx_event_t *rev = c->read;
+
+    rev->log = c->log;
+    rev->accept = 1;
+    rev->handler = ngx_event_accept;
+
+    return ngx_add_event(rev, NGX_READ_EVENT, 0);
+}
+
 static ngx_int_t
 ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
         struct addrinfo *p)
@@ -388,42 +428,14 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
         return NGX_ABORT;
     }
 
-    ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf((&conf), ngx_http_core_module);
-    ngx_http_conf_port_t *port = cmcf->ports->elts;
-    port += cmcf->ports->nelts - 1;
-    ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "port %d", port->port);
-
-    ngx_http_init_listening(&conf, port);
-    ngx_listening_t *ls = cycle->listening.elts;
-    ls += cycle->listening.nelts - 1;
-    ls->fd = listen_fd;
-
-    ngx_connection_t *c = ngx_get_connection(ls->fd, cycle->log);
-    if (c == NULL) {
-        return NGX_ERROR;
-    }
-
-    c->type = ls->type;
-    c->log = &ls->log;
-
-    c->listening = ls;
-    ls->connection = c;
-
-    ngx_event_t *rev = c->read;
-
-    rev->log = c->log;
-    rev->accept = 1;
-    rev->handler = ngx_event_accept;
-    printf(">>>%.*s\n", (int)ls->addr_text.len, ls->addr_text.data);
+    ngx_listening_t *ls = ngx_http_ws_add_listening(cycle, conf, listen_fd);
     s->addr_text = ls->addr_text;
 
-    if (ngx_add_event(rev, NGX_READ_EVENT, 0) == NGX_ERROR) {
-        return NGX_ERROR;
-    }
+    ngx_int_t rc = ngx_http_ws_add_listen_event(cycle, ls);
 
     ngx_destroy_pool(conf.temp_pool);
 
-    return NGX_OK;
+    return rc;
 }
 
 static struct wslay_event_callbacks callbacks = {
