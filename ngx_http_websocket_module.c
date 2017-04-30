@@ -43,7 +43,8 @@ static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_process_init(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
-void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
+static void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
+static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t);
 
 static ngx_command_t ngx_http_ws_commands[] = {
 
@@ -234,7 +235,7 @@ ngx_http_ws_msg_callback(wslay_event_context_ptr ctx,
     }
 }
 
-void
+static void
 ngx_http_ws_close(ngx_http_ws_ctx_t *t)
 {
     ngx_http_request_t *r = t->r;
@@ -500,7 +501,7 @@ ngx_http_ws_timeout(ngx_event_t *ev)
 static ngx_int_t
 ngx_http_ws_handshake(ngx_http_request_t *r)
 {
-    r->count++;
+    r->count++; /* prevent nginx close connection after upgrade */
     r->keepalive = 0;
 
     ngx_table_elt_t* h;
@@ -564,23 +565,29 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     wslay_event_queue_msg(ctx, &msgarg);
     wslay_event_send(ctx);
 
-    ngx_event_t *ping_ev = ngx_pnalloc(r->pool, sizeof(ngx_event_t) * 2);
+    ngx_http_ws_add_timer(t);
+
+    return NGX_OK;
+}
+
+static void
+ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t)
+{
+    ngx_event_t *ping_ev = ngx_pnalloc(t->r->pool, sizeof(ngx_event_t) * 2);
     ngx_event_t *timeout_ev = ping_ev++;
 
     ping_ev->data = t;
-    ping_ev->log = r->connection->log;
+    ping_ev->log = t->r->connection->log;
     ping_ev->handler = ngx_http_ws_ping;
 
     timeout_ev->data = t;
-    timeout_ev->log = r->connection->log;
+    timeout_ev->log = t->r->connection->log;
     timeout_ev->handler = ngx_http_ws_timeout;
 
     t->ping_ev = ping_ev;
     t->timeout_ev = timeout_ev;
 
     ngx_http_ws_flush_timer(t);
-
-    return NGX_OK;
 }
 
 static char *
