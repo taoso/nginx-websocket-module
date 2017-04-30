@@ -7,11 +7,20 @@
 #include "uthash.h"
 
 
+struct ngx_http_ws_loc_conf_s {
+    ngx_int_t pingintvl;
+    ngx_int_t idleintvl;
+};
+
+typedef struct ngx_http_ws_loc_conf_s ngx_http_ws_loc_conf_t;
+
 struct ngx_http_ws_ctx_s {
     ngx_http_request_t *r;
     wslay_event_context_ptr ws;
     ngx_event_t *ping_ev;
     ngx_event_t *timeout_ev;
+    ngx_int_t pingintvl;
+    ngx_int_t idleintvl;
     UT_hash_handle hh;
 };
 
@@ -39,7 +48,7 @@ void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
 static ngx_command_t ngx_http_websocket_commands[] = {
 
     { ngx_string("websocket"),
-      NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
+      NGX_HTTP_LOC_CONF|NGX_CONF_ANY,
       ngx_http_websocket,
       0, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
@@ -47,6 +56,16 @@ static ngx_command_t ngx_http_websocket_commands[] = {
 
     ngx_null_command
 };
+
+void *
+ngx_http_ws_create_loc_conf(ngx_conf_t *cf)
+{
+    ngx_http_ws_loc_conf_t *lcf = ngx_palloc(cf->pool, sizeof(ngx_http_ws_loc_conf_t));
+    lcf->pingintvl = 300 * 1000; // 5 min
+    lcf->idleintvl = 360 * 1000; // 6 min
+
+    return lcf;
+}
 
 static ngx_http_module_t ngx_http_websocket_module_ctx = {
     NULL, /* preconfiguration */
@@ -58,7 +77,7 @@ static ngx_http_module_t ngx_http_websocket_module_ctx = {
     NULL, /* create server configuration */
     NULL, /* merge server configuration */
 
-    NULL, /* create location configuration */
+    ngx_http_ws_create_loc_conf, /* create location configuration */
     NULL  /* merge location configuration */
 };
 
@@ -241,8 +260,8 @@ send_callback(wslay_event_context_ptr ctx,
 void
 ngx_http_ws_flush_timer(ngx_http_ws_ctx_t *t)
 {
-    ngx_add_timer(t->ping_ev, 5000);
-    ngx_add_timer(t->timeout_ev, 7000);
+    ngx_add_timer(t->ping_ev, t->pingintvl);
+    ngx_add_timer(t->timeout_ev, t->idleintvl);
 }
 
 void
@@ -556,6 +575,13 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
     ngx_http_ws_ctx_t *t = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
     t->r = r;
 
+    ngx_http_ws_loc_conf_t *wlcf = r->loc_conf[ngx_http_websocket_module.ctx_index];
+
+    t->pingintvl = wlcf->pingintvl;
+    t->idleintvl = wlcf->idleintvl;
+
+    printf("intvl:%ld:%ld\n", t->pingintvl, t->idleintvl);
+
     wslay_event_context_server_init(&ctx, &callbacks, t);
 
     r->read_event_handler = ngx_http_ws_event_handler;
@@ -607,6 +633,7 @@ static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_core_loc_conf_t *clcf;
     ngx_http_core_srv_conf_t *cscf;
+    ngx_http_ws_loc_conf_t *wlcf;
 
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_websocket_handler;
@@ -615,6 +642,19 @@ static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_http_ws_srv_addr_t *srv_addr = ngx_pnalloc(cf->pool, sizeof(ngx_http_ws_srv_addr_t));
     srv_addr->cscf = cscf;
     HASH_ADD_PTR(ws_srv_addr_hash, cscf, srv_addr);
+
+    wlcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_websocket_module);
+    ngx_str_t *value = cf->args->elts;
+    for (ngx_uint_t n = 1; n < cf->args->nelts; n++) {
+        printf("conf:%.*s\n", (int)value[n].len, value[n].data);
+        if (ngx_strncmp(value[n].data, "pingintvl=", 10) == 0) {
+            wlcf->pingintvl = ngx_atoi(value[n].data + 10, value[n].len - 10);
+        }
+
+        if (ngx_strncmp(value[n].data, "idleintvl=", 10) == 0) {
+            wlcf->idleintvl = ngx_atoi(value[n].data + 10, value[n].len - 10);
+        }
+    }
 
     return NGX_CONF_OK;
 }
