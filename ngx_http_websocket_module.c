@@ -241,10 +241,10 @@ static void
 ngx_http_ws_close(ngx_http_ws_ctx_t *t)
 {
     ngx_http_request_t *r = t->r;
-    HASH_FIND_PTR(ws_ctx_hash, &r, t);
+    HASH_FIND_INT(ws_ctx_hash, &r->connection->fd, t);
 
     if (t) {
-        printf("%p\n", t);
+        /* TODO debug log */
         HASH_DEL(ws_ctx_hash, t);
     }
 
@@ -494,9 +494,9 @@ ngx_http_ws_push_body_handler(ngx_http_request_t *r)
     printf("###:%.*s\n", (int)(buf->last - buf->pos), buf->pos);
 
     ngx_str_t user = r->headers_in.user;
-    ngx_http_request_t *wsr = (ngx_http_request_t *) ngx_hextoi((u_char *)(user.data + 2), (size_t)user.len - 2);
+    ngx_socket_t fd = (int) ngx_atoi((u_char *)user.data, (size_t)user.len);
     ngx_http_ws_ctx_t *t;
-    HASH_FIND_PTR(ws_ctx_hash, &wsr, t);
+    HASH_FIND_INT(ws_ctx_hash, &fd, t);
     if (t == NULL) {
         return;
     }
@@ -524,11 +524,9 @@ ngx_http_ws_push(ngx_http_request_t *r)
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    /* skip the leading 0x */
-    ngx_http_request_t *wsr = (ngx_http_request_t *) ngx_hextoi((u_char *)(user.data + 2), (size_t)user.len - 2);
-
+    ngx_socket_t fd = (int) ngx_atoi((u_char *)user.data, (size_t)user.len);
     ngx_http_ws_ctx_t *t;
-    HASH_FIND_PTR(ws_ctx_hash, &wsr, t);
+    HASH_FIND_INT(ws_ctx_hash, &fd, t);
     if (t == NULL) {
         return NGX_HTTP_BAD_REQUEST;
     }
@@ -630,7 +628,7 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
     r->upstream = (ngx_http_upstream_t *) ctx;
 
     t->ws = ctx;
-    HASH_ADD_PTR(ws_ctx_hash, r, t);
+    HASH_ADD_INT(ws_ctx_hash, r->connection->fd, t);
 
     return t;
 }
@@ -648,7 +646,7 @@ ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t)
     HASH_FIND_PTR(ws_srv_addr_hash, &cscf, push_addr);
 
     char msg_buf[256];
-    int msg_buf_len = sprintf(msg_buf, "http://%p@%.*s%.*s", r,
+    int msg_buf_len = sprintf(msg_buf, "http://%d@%.*s%.*s", r->connection->fd,
             (int)push_addr->addr_text.len, push_addr->addr_text.data,
             (int)clcf->name.len, clcf->name.data);
     struct wslay_event_msg msgarg = {
