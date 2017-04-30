@@ -411,7 +411,8 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
         return NGX_ABORT;
     }
 
-    ngx_conf_t conf;
+    ngx_conf_t conf, *cf;
+    cf = &conf;
     if (ngx_http_ws_init_ngx_conf(cycle, &conf) != NGX_OK) {
         return NGX_ABORT;
     }
@@ -420,6 +421,11 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
     if (ngx_http_ws_init_lsopt(&lsopt, listen_fd) != NGX_OK) {
         return NGX_ABORT;
     }
+
+    ngx_http_core_main_conf_t *cmcf;
+    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+    cmcf->ports = NULL; /* ports array has been freed by not reset to NULL
+                           in master process. */
 
     if (ngx_http_add_listen(&conf, s->cscf, &lsopt) != NGX_OK) {
         return NGX_ABORT;
