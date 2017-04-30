@@ -46,6 +46,7 @@ static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
 static void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t);
+static ngx_http_ws_ctx_t *ngx_http_ws_init_ctx(ngx_http_request_t *r);
 
 static ngx_command_t ngx_http_ws_commands[] = {
 
@@ -527,6 +528,20 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     add_header("Upgrade", "websocket");
     add_header("Sec-WebSocket-Version", "13");
 
+    ngx_http_send_header(r);
+    ngx_http_send_special(r, NGX_HTTP_FLUSH);
+
+    ngx_http_ws_ctx_t *t = ngx_http_ws_init_ctx(r);
+
+    ngx_http_ws_send_push_token(t);
+    ngx_http_ws_add_timer(t);
+
+    return NGX_OK;
+}
+
+static ngx_http_ws_ctx_t *
+ngx_http_ws_init_ctx(ngx_http_request_t *r)
+{
     wslay_event_context_ptr ctx = NULL;
     ngx_http_ws_ctx_t *t = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
     t->r = r;
@@ -543,16 +558,10 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     r->read_event_handler = ngx_http_ws_event_handler;
     r->upstream = (ngx_http_upstream_t *) ctx;
 
-    ngx_http_send_header(r);
-    ngx_http_send_special(r, NGX_HTTP_FLUSH);
-
     t->ws = ctx;
     HASH_ADD_PTR(ws_ctx_hash, r, t);
 
-    ngx_http_ws_send_push_token(t);
-    ngx_http_ws_add_timer(t);
-
-    return NGX_OK;
+    return t;
 }
 
 static void
