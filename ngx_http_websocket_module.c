@@ -45,6 +45,7 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
 static void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t);
+static void ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t);
 
 static ngx_command_t ngx_http_ws_commands[] = {
 
@@ -548,6 +549,18 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
     t->ws = ctx;
     HASH_ADD_PTR(ws_ctx_hash, r, t);
 
+    ngx_http_ws_send_push_token(t);
+    ngx_http_ws_add_timer(t);
+
+    return NGX_OK;
+}
+
+static void
+ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t)
+{
+    ngx_http_request_t *r = t->r;
+    wslay_event_context_ptr ctx = t->ws;
+
     ngx_http_core_srv_conf_t *cscf = r->srv_conf[ngx_http_core_module.ctx_index];
     ngx_http_core_loc_conf_t *clcf = r->loc_conf[ngx_http_core_module.ctx_index];
 
@@ -564,10 +577,6 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
 
     wslay_event_queue_msg(ctx, &msgarg);
     wslay_event_send(ctx);
-
-    ngx_http_ws_add_timer(t);
-
-    return NGX_OK;
 }
 
 static void
