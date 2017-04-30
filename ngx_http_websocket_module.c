@@ -265,9 +265,9 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    char hostname[1024];
-    hostname[1023] = '\0';
-    gethostname(hostname, sizeof(hostname));
+    char hostname[cycle->hostname.len + 1];
+    hostname[cycle->hostname.len] = '\0';
+    ngx_memcpy(hostname, cycle->hostname.data, cycle->hostname.len);
 
     if ((status = getaddrinfo(hostname, NULL, &hints, &res)) != 0) {
         ngx_log_error(NGX_LOG_ERR, cycle->log, 0, "get ip: %s", gai_strerror(status));
