@@ -38,18 +38,18 @@ typedef struct ngx_http_ws_srv_addr_s ngx_http_ws_srv_addr_t;
 
 static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
 
-static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r);
-static ngx_int_t ngx_http_websocket_process_init(ngx_cycle_t *cycle);
+static char *ngx_http_ws(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_ws_process_init(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
 void ngx_http_ws_close(ngx_http_ws_ctx_t *t);
 
-static ngx_command_t ngx_http_websocket_commands[] = {
+static ngx_command_t ngx_http_ws_commands[] = {
 
     { ngx_string("websocket"),
       NGX_HTTP_LOC_CONF|NGX_CONF_ANY,
-      ngx_http_websocket,
+      ngx_http_ws,
       0, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
       NULL },
@@ -85,11 +85,11 @@ static ngx_http_module_t ngx_http_websocket_module_ctx = {
 ngx_module_t ngx_http_websocket_module = {
     NGX_MODULE_V1,
     &ngx_http_websocket_module_ctx, /* module context */
-    ngx_http_websocket_commands,    /* module directives */
+    ngx_http_ws_commands,           /* module directives */
     NGX_HTTP_MODULE,                /* module type */
     NULL,                           /* init master */
     NULL,                           /* init module */
-    ngx_http_websocket_process_init,/* init process */
+    ngx_http_ws_process_init,       /* init process */
     NULL,                           /* init thread */
     NULL,                           /* exit thread */
     NULL,                           /* exit process */
@@ -110,7 +110,8 @@ ngx_module_t ngx_http_websocket_module = {
 
 #define WS_UUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-ngx_table_elt_t *ngx_http_websocket_find_key_header(ngx_http_request_t *r)
+ngx_table_elt_t *
+ngx_http_ws_find_key_header(ngx_http_request_t *r)
 {
     ngx_table_elt_t *key_header = NULL;
     ngx_list_part_t *part = &r->headers_in.headers.part;
@@ -137,7 +138,8 @@ ngx_table_elt_t *ngx_http_websocket_find_key_header(ngx_http_request_t *r)
     return key_header;
 }
 
-u_char *ngx_http_websocket_build_accept_key(ngx_table_elt_t *key_header, ngx_http_request_t *r)
+u_char *
+ngx_http_ws_build_accept_key(ngx_table_elt_t *key_header, ngx_http_request_t *r)
 {
     ngx_str_t encoded, decoded;
     ngx_sha1_t  sha1;
@@ -161,56 +163,6 @@ u_char *ngx_http_websocket_build_accept_key(ngx_table_elt_t *key_header, ngx_htt
     ngx_encode_base64(&encoded, &decoded);
 
     return encoded.data;
-}
-
-void
-ngx_http_websocket_read(ngx_http_request_t *r)
-{
-    int                n;
-    char               buf[1];
-    ngx_err_t          err;
-    ngx_event_t       *rev;
-    ngx_connection_t  *c;
-
-    c = r->connection;
-    rev = c->read;
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http websocket test reading");
-
-    n = recv(c->fd, buf, 1, MSG_PEEK);
-
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0, "http websocket readed %d bytes", n);
-
-    if (n == 0) {
-        rev->eof = 1;
-        c->error = 1;
-        err = 0;
-
-        goto closed;
-
-    } else if (n == -1) {
-        err = ngx_socket_errno;
-
-        if (err != NGX_EAGAIN) {
-            rev->eof = 1;
-            c->error = 1;
-
-            goto closed;
-        }
-    }
-
-    return;
-
-closed:
-
-    if (err) {
-        rev->error = 1;
-    }
-
-    ngx_log_error(NGX_LOG_INFO, c->log, err,
-                  "client prematurely closed connection");
-
-    ngx_http_finalize_request(r, NGX_HTTP_CLIENT_CLOSED_REQUEST);
 }
 
 static ssize_t
@@ -304,7 +256,7 @@ ngx_http_ws_close(ngx_http_ws_ctx_t *t)
 }
 
 static ngx_int_t
-ngx_http_websocket_process_init(ngx_cycle_t *cycle)
+ngx_http_ws_process_init(ngx_cycle_t *cycle)
 {
     int status;
     struct addrinfo hints = {};
@@ -446,7 +398,7 @@ ngx_http_ws_event_handler(ngx_http_request_t *r)
     }
 }
 
-static ngx_int_t ngx_http_websocket_handler(ngx_http_request_t *r)
+static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r)
 {
     if (r->method & NGX_HTTP_GET) {
         return ngx_http_ws_handshake(r);
@@ -491,7 +443,8 @@ ngx_http_ws_push_body_handler(ngx_http_request_t *r)
     ngx_http_finalize_request(r, NGX_HTTP_NO_CONTENT);
 }
 
-static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r)
+static ngx_int_t
+ngx_http_ws_push(ngx_http_request_t *r)
 {
     ngx_int_t rc = ngx_http_auth_basic_user(r);
     if (rc == NGX_ERROR) {
@@ -544,17 +497,18 @@ ngx_http_ws_timeout(ngx_event_t *ev)
     wslay_event_send(t->ws);
 }
 
-static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
+static ngx_int_t
+ngx_http_ws_handshake(ngx_http_request_t *r)
 {
     r->count++;
     r->keepalive = 0;
 
     ngx_table_elt_t* h;
 
-    ngx_table_elt_t *key_header = ngx_http_websocket_find_key_header(r);
+    ngx_table_elt_t *key_header = ngx_http_ws_find_key_header(r);
 
     if (key_header != NULL) {
-        u_char *accept = ngx_http_websocket_build_accept_key(key_header, r);
+        u_char *accept = ngx_http_ws_build_accept_key(key_header, r);
 
         if (accept == NULL) {
             return NGX_ERROR;
@@ -629,14 +583,15 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
     return NGX_OK;
 }
 
-static char *ngx_http_websocket(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+static char *
+ngx_http_ws(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_core_loc_conf_t *clcf;
     ngx_http_core_srv_conf_t *cscf;
     ngx_http_ws_loc_conf_t *wlcf;
 
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    clcf->handler = ngx_http_websocket_handler;
+    clcf->handler = ngx_http_ws_handler;
 
     cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
     ngx_http_ws_srv_addr_t *srv_addr = ngx_pnalloc(cf->pool, sizeof(ngx_http_ws_srv_addr_t));
