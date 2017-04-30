@@ -21,6 +21,7 @@ process. We will try to make this patch be merged into the nginx code base.
 
 ## install
 
+1. install [libwslay](https://github.com/tatsuhiro-t/wslay)
 1. download nginx source code
 1. go to base dir of nginx source code and run `patch -p1 < /path/to/ngx_listen.diff`
 1. then run `./auto/configure --prefix=/tmp/ngx --add-module=path/to/src/nginx-websocket-module --with-debug`
