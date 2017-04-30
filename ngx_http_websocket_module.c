@@ -321,7 +321,26 @@ ngx_http_ws_alloc_push_listenfd(struct addrinfo *p)
 }
 
 static ngx_int_t
-ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s, struct addrinfo *p)
+ngx_http_ws_init_ngx_conf(ngx_cycle_t *cycle, ngx_conf_t *conf)
+{
+    ngx_memzero(conf, sizeof(ngx_conf_t));
+
+    conf->temp_pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, cycle->log);
+    if (conf->temp_pool == NULL) {
+        return NGX_ABORT;
+    }
+
+    conf->ctx = cycle->conf_ctx[ngx_http_module.index];
+    conf->cycle = cycle;
+    conf->pool = cycle->pool;
+    conf->log = cycle->log;
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
+        struct addrinfo *p)
 {
     ngx_socket_t listen_fd = ngx_http_ws_alloc_push_listenfd(p);
     if (listen_fd == 0) {
@@ -334,20 +353,9 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s, struc
         return NGX_ABORT;
     }
 
-    // ngx_conf_t
     ngx_conf_t conf;
-    ngx_memzero(&conf, sizeof(ngx_conf_t));
+    ngx_http_ws_init_ngx_conf(cycle, &conf);
 
-    conf.temp_pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, cycle->log);
-    if (conf.temp_pool == NULL) {
-        return NGX_ABORT;
-    }
-
-    conf.ctx = cycle->conf_ctx[ngx_http_module.index];
-    conf.cycle = cycle;
-    conf.pool = cycle->pool;
-    conf.log = cycle->log;
-    // lsopt
     ngx_http_listen_opt_t lsopt;
     ngx_memzero(&lsopt, sizeof(ngx_http_listen_opt_t));
 
