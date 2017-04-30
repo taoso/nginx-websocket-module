@@ -12,8 +12,6 @@ struct ngx_http_ws_loc_conf_s {
     ngx_int_t idleintvl;
 };
 
-typedef struct ngx_http_ws_loc_conf_s ngx_http_ws_loc_conf_t;
-
 struct ngx_http_ws_ctx_s {
     ngx_http_request_t *r;
     wslay_event_context_ptr ws;
@@ -24,18 +22,17 @@ struct ngx_http_ws_ctx_s {
     UT_hash_handle hh;
 };
 
-typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
-
-ngx_http_ws_ctx_t *ws_ctx_hash = NULL;
-
 struct ngx_http_ws_srv_addr_s {
     void *cscf; /** ngx_http_core_srv_conf_t **/
     ngx_str_t addr_text;
     UT_hash_handle hh;
 };
 
+typedef struct ngx_http_ws_loc_conf_s ngx_http_ws_loc_conf_t;
+typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
 typedef struct ngx_http_ws_srv_addr_s ngx_http_ws_srv_addr_t;
 
+static ngx_http_ws_ctx_t *ws_ctx_hash = NULL;
 static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
 
 static char *ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -51,7 +48,7 @@ static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *t);
 static void ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t);
 static ngx_http_ws_ctx_t *ngx_http_ws_init_ctx(ngx_http_request_t *r);
 
-static ngx_command_t ngx_http_ws_commands[] = {
+static ngx_command_t ngx_http_websocket_commands[] = {
 
     { ngx_string("websocket"),
       NGX_HTTP_LOC_CONF|NGX_CONF_ANY,
@@ -91,7 +88,7 @@ static ngx_http_module_t ngx_http_websocket_module_ctx = {
 ngx_module_t ngx_http_websocket_module = {
     NGX_MODULE_V1,
     &ngx_http_websocket_module_ctx, /* module context */
-    ngx_http_ws_commands,           /* module directives */
+    ngx_http_websocket_commands,    /* module directives */
     NGX_HTTP_MODULE,                /* module type */
     NULL,                           /* init master */
     NULL,                           /* init module */
@@ -103,7 +100,7 @@ ngx_module_t ngx_http_websocket_module = {
     NGX_MODULE_V1_PADDING
 };
 
-#define add_header(header_key, header_value)                                 \
+#define ADD_HEADER(header_key, header_value)                                 \
     h = ngx_list_push(&r->headers_out.headers);                              \
     if (h == NULL) {                                                         \
         return NGX_ERROR;                                                    \
@@ -116,7 +113,7 @@ ngx_module_t ngx_http_websocket_module = {
 
 #define WS_UUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-ngx_table_elt_t *
+static ngx_table_elt_t *
 ngx_http_ws_find_key_header(ngx_http_request_t *r)
 {
     ngx_table_elt_t *key_header = NULL;
@@ -144,7 +141,7 @@ ngx_http_ws_find_key_header(ngx_http_request_t *r)
     return key_header;
 }
 
-u_char *
+static u_char *
 ngx_http_ws_build_accept_key(ngx_table_elt_t *key_header, ngx_http_request_t *r)
 {
     ngx_str_t encoded, decoded;
@@ -215,14 +212,14 @@ ngx_http_ws_send_callback(wslay_event_context_ptr ctx,
     return n;
 }
 
-void
+static void
 ngx_http_ws_flush_timer(ngx_http_ws_ctx_t *t)
 {
     ngx_add_timer(t->ping_ev, t->pingintvl);
     ngx_add_timer(t->timeout_ev, t->idleintvl);
 }
 
-void
+static void
 ngx_http_ws_msg_callback(wslay_event_context_ptr ctx,
         const struct wslay_event_on_msg_recv_arg *arg, void *user_data)
 {
@@ -538,7 +535,7 @@ ngx_http_ws_push(ngx_http_request_t *r)
     return NGX_DONE;
 }
 
-void
+static void
 ngx_http_ws_ping(ngx_event_t *ev)
 {
     printf("ping\n");
@@ -550,7 +547,7 @@ ngx_http_ws_ping(ngx_event_t *ev)
     wslay_event_send(t->ws);
 }
 
-void
+static void
 ngx_http_ws_timeout(ngx_event_t *ev)
 {
     printf("close\n");
@@ -592,15 +589,15 @@ ngx_http_ws_send_handshake(ngx_http_request_t *r)
             return NGX_ERROR;
         }
 
-        add_header("Sec-WebSocket-Accept", accept);
+        ADD_HEADER("Sec-WebSocket-Accept", accept);
     }
 
     r->headers_out.status = NGX_HTTP_SWITCHING_PROTOCOLS;
     r->headers_out.status_line.data = (u_char *) "101 Switching Protocols";
     r->headers_out.status_line.len = sizeof("101 Switching Protocols") - 1;
 
-    add_header("Upgrade", "websocket");
-    add_header("Sec-WebSocket-Version", "13");
+    ADD_HEADER("Upgrade", "websocket");
+    ADD_HEADER("Sec-WebSocket-Version", "13");
 
     ngx_http_send_header(r);
 
