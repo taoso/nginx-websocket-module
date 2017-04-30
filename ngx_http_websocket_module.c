@@ -195,7 +195,8 @@ static ssize_t
 recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
         int flags, void *user_data)
 {
-    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+    ngx_http_ws_ctx_t *t = user_data;
+    ngx_http_request_t *r = t->r;
     ngx_connection_t  *c = r->connection;
 
     ssize_t n = recv(c->fd, buf, len, 0);
@@ -218,7 +219,8 @@ static ssize_t
 send_callback(wslay_event_context_ptr ctx,
         const uint8_t *data, size_t len, int flags, void *user_data)
 {
-    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+    ngx_http_ws_ctx_t *t = user_data;
+    ngx_http_request_t *r = t->r;
     ngx_connection_t  *c = r->connection;
 
     ssize_t n = send(c->fd, data, len, 0);
@@ -237,7 +239,8 @@ void
 on_msg_recv_callback(wslay_event_context_ptr ctx,
         const struct wslay_event_on_msg_recv_arg *arg, void *user_data)
 {
-    ngx_http_request_t *r = (ngx_http_request_t *)user_data;
+    ngx_http_ws_ctx_t *t = user_data;
+    ngx_http_request_t *r = t->r;
 
     if(!wslay_is_ctrl_frame(arg->opcode)) {
         struct wslay_event_msg msgarg = {
@@ -245,7 +248,6 @@ on_msg_recv_callback(wslay_event_context_ptr ctx,
         };
         wslay_event_queue_msg(ctx, &msgarg);
     } else if (arg->opcode & WSLAY_CONNECTION_CLOSE) {
-        ngx_http_ws_ctx_t *t;
         HASH_FIND_PTR(ws_ctx_hash, &r, t);
 
         if (t) {
@@ -502,9 +504,11 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
     add_header("Upgrade", "websocket");
     add_header("Sec-WebSocket-Version", "13");
 
-    wslay_event_context_ptr ctx = ngx_pnalloc(r->pool, sizeof(wslay_event_context_ptr));
+    wslay_event_context_ptr ctx = NULL;
+    ngx_http_ws_ctx_t *t = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
+    t->r = r;
 
-    wslay_event_context_server_init(&ctx, &callbacks, r);
+    wslay_event_context_server_init(&ctx, &callbacks, t);
 
     r->read_event_handler = ngx_http_ws_event_handler;
     r->upstream = (ngx_http_upstream_t *) ctx;
@@ -512,8 +516,6 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r)
     ngx_http_send_header(r);
     ngx_http_send_special(r, NGX_HTTP_FLUSH);
 
-    ngx_http_ws_ctx_t *t = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
-    t->r = r;
     t->ws = ctx;
     HASH_ADD_PTR(ws_ctx_hash, r, t);
 
