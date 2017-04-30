@@ -38,7 +38,7 @@ typedef struct ngx_http_ws_srv_addr_s ngx_http_ws_srv_addr_t;
 
 static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
 
-static char *ngx_http_ws(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_process_init(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
@@ -49,7 +49,7 @@ static ngx_command_t ngx_http_ws_commands[] = {
 
     { ngx_string("websocket"),
       NGX_HTTP_LOC_CONF|NGX_CONF_ANY,
-      ngx_http_ws,
+      ngx_http_ws_conf,
       0, /* No offset. Only one context is supported. */
       0, /* No offset when storing the module configuration on struct. */
       NULL },
@@ -166,7 +166,7 @@ ngx_http_ws_build_accept_key(ngx_table_elt_t *key_header, ngx_http_request_t *r)
 }
 
 static ssize_t
-recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
+ngx_http_ws_recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
         int flags, void *user_data)
 {
     ngx_http_ws_ctx_t *t = user_data;
@@ -190,7 +190,7 @@ recv_callback(wslay_event_context_ptr ctx, uint8_t *buf, size_t len,
 }
 
 static ssize_t
-send_callback(wslay_event_context_ptr ctx,
+ngx_http_ws_send_callback(wslay_event_context_ptr ctx,
         const uint8_t *data, size_t len, int flags, void *user_data)
 {
     ngx_http_ws_ctx_t *t = user_data;
@@ -217,7 +217,7 @@ ngx_http_ws_flush_timer(ngx_http_ws_ctx_t *t)
 }
 
 void
-on_msg_recv_callback(wslay_event_context_ptr ctx,
+ngx_http_ws_msg_callback(wslay_event_context_ptr ctx,
         const struct wslay_event_on_msg_recv_arg *arg, void *user_data)
 {
     ngx_http_ws_ctx_t *t = user_data;
@@ -374,13 +374,13 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
 }
 
 static struct wslay_event_callbacks callbacks = {
-    recv_callback,
-    send_callback,
+    ngx_http_ws_recv_callback,
+    ngx_http_ws_send_callback,
     NULL,
     NULL,
     NULL,
     NULL,
-    on_msg_recv_callback
+    ngx_http_ws_msg_callback
 };
 
 static void
@@ -584,7 +584,7 @@ ngx_http_ws_handshake(ngx_http_request_t *r)
 }
 
 static char *
-ngx_http_ws(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_core_loc_conf_t *clcf;
     ngx_http_core_srv_conf_t *cscf;
