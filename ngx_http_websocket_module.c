@@ -23,7 +23,7 @@ struct ngx_http_ws_ctx_s {
 };
 
 struct ngx_http_ws_srv_addr_s {
-    void *cscf; /** ngx_http_core_srv_conf_t **/
+    ngx_http_core_srv_conf_t *cscf;
     struct addrinfo *addrs;
     int port;
     UT_hash_handle hh;
