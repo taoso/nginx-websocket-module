@@ -216,6 +216,9 @@ ngx_http_ws_send_callback(wslay_event_context_ptr ctx,
 static void
 ngx_http_ws_flush_timer(ngx_http_ws_ctx_t *t)
 {
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: flush timer: %d", t->r->connection->fd);
+
     ngx_add_timer(t->ping_ev, t->pingintvl);
     ngx_add_timer(t->timeout_ev, t->idleintvl);
 }
@@ -242,19 +245,30 @@ static void
 ngx_http_ws_close(ngx_http_ws_ctx_t *t)
 {
     ngx_http_request_t *r = t->r;
+
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: close %d %p", t->r->connection->fd, t->ws);
+
+    /* FIXME the t has been overwrited */
     HASH_FIND_INT(ws_ctx_hash, &r->connection->fd, t);
 
     if (t) {
-        /* TODO debug log */
         HASH_DEL(ws_ctx_hash, t);
+        ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+                "websocket: del ctx %d %p", t->r->connection->fd, t->ws);
     }
 
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: clear timer %d %p", t->r->connection->fd, t->ws);
     ngx_del_timer(t->ping_ev);
+    /* FIXME ngx_event_del_timer coredump */
     ngx_del_timer(t->timeout_ev);
     ngx_pfree(r->pool, t->ping_ev);
     ngx_pfree(r->pool, t->timeout_ev);
     ngx_pfree(r->pool, t);
 
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: finalize request %d %p", t->r->connection->fd, t->ws);
     r->count = 1;
     ngx_http_finalize_request(r, NGX_DONE);
 }
@@ -422,6 +436,9 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
         return NGX_ABORT;
     }
 
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, cf->log, 0,
+            "websocket: listen on port %d", port);
+
     ngx_http_core_main_conf_t *cmcf;
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
     cmcf->ports = NULL; /* ports array has been freed by not reset to NULL
@@ -493,7 +510,10 @@ ngx_http_ws_push_body_handler(ngx_http_request_t *r)
     /* TODO iterate bufs */
     /* TODO process temp_file */
     ngx_buf_t *buf = r->request_body->bufs->buf;
-    printf("###:%.*s\n", (int)(buf->last - buf->pos), buf->pos);
+
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+            "websocket: push %d %*s",
+            r->connection->fd, (int)(buf->last - buf->pos), buf->pos);
 
     ngx_str_t user = r->headers_in.user;
     ngx_socket_t fd = (int) ngx_atoi((u_char *)user.data, (size_t)user.len);
@@ -544,8 +564,10 @@ ngx_http_ws_push(ngx_http_request_t *r)
 static void
 ngx_http_ws_ping(ngx_event_t *ev)
 {
-    printf("ping\n");
     ngx_http_ws_ctx_t *t = ev->data;
+
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: ping %d %p", t->r->connection->fd, t->ws);
 
     struct wslay_event_msg msg = { WSLAY_PING, NULL, 0 };
 
@@ -556,13 +578,17 @@ ngx_http_ws_ping(ngx_event_t *ev)
 static void
 ngx_http_ws_timeout(ngx_event_t *ev)
 {
-    printf("close\n");
     ngx_http_ws_ctx_t *t = ev->data;
+
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
+            "websocket: timeout %d %p", t->r->connection->fd, t->ws);
 
     struct wslay_event_msg msg = { WSLAY_CONNECTION_CLOSE, NULL, 0 };
 
     wslay_event_queue_msg(t->ws, &msg);
     wslay_event_send(t->ws);
+
+    /* FIXME close request */
 }
 
 static ngx_int_t
@@ -622,7 +648,9 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
     t->pingintvl = wlcf->pingintvl;
     t->idleintvl = wlcf->idleintvl;
 
-    printf("intvl:%ld:%ld\n", t->pingintvl, t->idleintvl);
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+            "websocket: pingintvl: %d, idleintvl: %d",
+            t->pingintvl, t->idleintvl);
 
     wslay_event_context_server_init(&ctx, &callbacks, t);
 
@@ -631,6 +659,9 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
 
     t->ws = ctx;
     HASH_ADD_INT(ws_ctx_hash, r->connection->fd, t);
+
+    ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+            "websocket: new ctx: %d %p", r->connection->fd, t);
 
     return t;
 }
@@ -659,6 +690,9 @@ ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *t)
         sprintf(token_buf, "http://%d@%s:%d%.*s",
                 r->connection->fd, ipstr, push_addr->port,
                 (int)clcf->name.len, clcf->name.data);
+
+        ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                "websocket: push token: %s", token_buf);
         bufp += sprintf(bufp, "%s,", token_buf);
     }
 
@@ -708,7 +742,8 @@ ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     wlcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_websocket_module);
     ngx_str_t *value = cf->args->elts;
     for (ngx_uint_t n = 1; n < cf->args->nelts; n++) {
-        printf("conf:%.*s\n", (int)value[n].len, value[n].data);
+        /* TODO ngx_log_debug(NGX_LOG_DEBUG_HTTP, cf->log, 0, "ws:%V:%V", clcf->name, value[n]); */
+
         if (ngx_strncmp(value[n].data, "pingintvl=", 10) == 0) {
             wlcf->pingintvl = ngx_atoi(value[n].data + 10, value[n].len - 10);
         }
