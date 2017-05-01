@@ -59,6 +59,6 @@ echo 123|http http://12@172.16.71.231:48775/ws
 
 ## todo
 - [ ] ipv6
-- [ ] more debug log
+- [x] more debug log
 - [ ] push binary data
 - [ ] process upstream message
