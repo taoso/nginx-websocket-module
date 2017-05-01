@@ -260,12 +260,13 @@ ngx_http_ws_close(ngx_http_ws_ctx_t *t)
 
     ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
             "websocket: clear timer %d %p", t->r->connection->fd, t->ws);
-    ngx_del_timer(t->ping_ev);
-    /* FIXME ngx_event_del_timer coredump */
-    ngx_del_timer(t->timeout_ev);
-    ngx_pfree(r->pool, t->ping_ev);
-    ngx_pfree(r->pool, t->timeout_ev);
-    ngx_pfree(r->pool, t);
+
+    if (t->ping_ev->timer_set) {
+        ngx_del_timer(t->ping_ev);
+    }
+    if (t->timeout_ev->timer_set) {
+        ngx_del_timer(t->timeout_ev);
+    }
 
     ngx_log_debug(NGX_LOG_DEBUG_HTTP, t->r->connection->log, 0,
             "websocket: finalize request %d %p", t->r->connection->fd, t->ws);
@@ -588,7 +589,7 @@ ngx_http_ws_timeout(ngx_event_t *ev)
     wslay_event_queue_msg(t->ws, &msg);
     wslay_event_send(t->ws);
 
-    /* FIXME close request */
+    ngx_http_ws_close(t);
 }
 
 static ngx_int_t
