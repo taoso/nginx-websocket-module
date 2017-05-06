@@ -475,14 +475,14 @@ static void
 ngx_http_ws_event_handler(ngx_http_request_t *r)
 {
     ngx_connection_t *c = r->connection;
-    wslay_event_context_ptr wslay_ctx = (wslay_event_context_ptr) r->upstream;
+    ngx_http_ws_ctx_t *ctx = (ngx_http_ws_ctx_t *) ngx_http_get_module_ctx(r, ngx_http_websocket_module);
 
     if (c->read->ready) {
-        wslay_event_recv(wslay_ctx);
+        wslay_event_recv(ctx->ws);
     }
 
     if (c->write->ready) {
-        wslay_event_send(wslay_ctx);
+        wslay_event_send(ctx->ws);
     }
 }
 
@@ -656,7 +656,7 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
     wslay_event_context_server_init(&wslay_ctx, &callbacks, ctx);
 
     r->read_event_handler = ngx_http_ws_event_handler;
-    r->upstream = (ngx_http_upstream_t *) wslay_ctx;
+    ngx_http_set_ctx(r, ctx, ngx_http_websocket_module);
 
     ctx->ws = wslay_ctx;
     HASH_ADD_INT(ws_ctx_hash, r->connection->fd, ctx);
