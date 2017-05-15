@@ -22,7 +22,7 @@ struct ngx_http_ws_ctx_s {
     UT_hash_handle hh;
 };
 
-struct ngx_http_ws_srv_addr_s {
+struct ngx_http_ws_srv_ctx_s {
     ngx_http_core_srv_conf_t *cscf;
     struct addrinfo *addrs;
     int port;
@@ -31,10 +31,10 @@ struct ngx_http_ws_srv_addr_s {
 
 typedef struct ngx_http_ws_loc_conf_s ngx_http_ws_loc_conf_t;
 typedef struct ngx_http_ws_ctx_s ngx_http_ws_ctx_t;
-typedef struct ngx_http_ws_srv_addr_s ngx_http_ws_srv_addr_t;
+typedef struct ngx_http_ws_srv_ctx_s ngx_http_ws_srv_ctx_t;
 
 static ngx_http_ws_ctx_t *ws_ctx_hash = NULL;
-static ngx_http_ws_srv_addr_t *ws_srv_addr_hash = NULL;
+static ngx_http_ws_srv_ctx_t *ws_srv_ctx_hash = NULL;
 
 static char *ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_ws_handler(ngx_http_request_t *r);
@@ -43,7 +43,7 @@ static ngx_int_t ngx_http_ws_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_push(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_send_handshake(ngx_http_request_t *r);
 static ngx_int_t ngx_http_ws_add_push_listen(ngx_cycle_t *cycle,
-        ngx_http_ws_srv_addr_t *s, struct addrinfo *p);
+        ngx_http_ws_srv_ctx_t *s, struct addrinfo *p);
 static void ngx_http_ws_close(ngx_http_ws_ctx_t *ctx);
 static void ngx_http_ws_add_timer(ngx_http_ws_ctx_t *ctx);
 static void ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *ctx);
@@ -301,8 +301,8 @@ ngx_http_ws_process_init(ngx_cycle_t *cycle)
 {
     struct addrinfo *res = ngx_http_ws_get_addrinfo(cycle);
 
-    ngx_http_ws_srv_addr_t *s;
-    for (s = ws_srv_addr_hash; s != NULL; s = s->hh.next) {
+    ngx_http_ws_srv_ctx_t *s;
+    for (s = ws_srv_ctx_hash; s != NULL; s = s->hh.next) {
         ngx_int_t rc = ngx_http_ws_add_push_listen(cycle, s, res);
         if (rc != NGX_OK) {
             return rc;
@@ -417,7 +417,7 @@ ngx_http_ws_add_listen_event(ngx_cycle_t *cycle, ngx_listening_t *ls)
 }
 
 static ngx_int_t
-ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
+ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_ctx_t *s,
         struct addrinfo *p)
 {
     ngx_socket_t listen_fd = ngx_http_ws_alloc_push_listenfd();
@@ -676,20 +676,20 @@ ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *ctx)
     ngx_http_core_srv_conf_t *cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
     ngx_http_core_loc_conf_t *clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
-    ngx_http_ws_srv_addr_t *push_addr;
-    HASH_FIND_PTR(ws_srv_addr_hash, &cscf, push_addr);
+    ngx_http_ws_srv_ctx_t *srv_ctx;
+    HASH_FIND_PTR(ws_srv_ctx_hash, &cscf, srv_ctx);
 
     char token_buf[256], tokens_buf[4096], *bufp;
     bufp = tokens_buf;
 
-    for (struct addrinfo *p = push_addr->addrs; p != NULL; p = p->ai_next) {
+    for (struct addrinfo *p = srv_ctx->addrs; p != NULL; p = p->ai_next) {
         void *addr;
         char ipstr[INET6_ADDRSTRLEN];
         struct sockaddr_in *ip = (struct sockaddr_in *)p->ai_addr;
         addr = &ip->sin_addr;
         inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
         sprintf(token_buf, "http://%d@%s:%d%.*s",
-                r->connection->fd, ipstr, push_addr->port,
+                r->connection->fd, ipstr, srv_ctx->port,
                 (int)clcf->name.len, clcf->name.data);
 
         ngx_log_debug(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -736,9 +736,9 @@ ngx_http_ws_conf(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     clcf->handler = ngx_http_ws_handler;
 
     cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
-    ngx_http_ws_srv_addr_t *srv_addr = ngx_pnalloc(cf->pool, sizeof(ngx_http_ws_srv_addr_t));
-    srv_addr->cscf = cscf;
-    HASH_ADD_PTR(ws_srv_addr_hash, cscf, srv_addr);
+    ngx_http_ws_srv_ctx_t *srv_ctx = ngx_pnalloc(cf->pool, sizeof(ngx_http_ws_srv_ctx_t));
+    srv_ctx->cscf = cscf;
+    HASH_ADD_PTR(ws_srv_ctx_hash, cscf, srv_ctx);
 
     wlcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_websocket_module);
     ngx_str_t *value = cf->args->elts;
