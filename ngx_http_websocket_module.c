@@ -461,7 +461,7 @@ ngx_http_ws_add_push_listen(ngx_cycle_t *cycle, ngx_http_ws_srv_addr_t *s,
     return rc;
 }
 
-static struct wslay_event_callbacks callbacks = {
+static struct wslay_event_callbacks ws_callbacks = {
     ngx_http_ws_recv_callback,
     ngx_http_ws_send_callback,
     NULL,
@@ -644,7 +644,7 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
     ngx_http_ws_ctx_t *ctx = ngx_pnalloc(r->pool, sizeof(ngx_http_ws_ctx_t));
     ctx->r = r;
 
-    ngx_http_ws_loc_conf_t *wlcf = r->loc_conf[ngx_http_websocket_module.ctx_index];
+    ngx_http_ws_loc_conf_t *wlcf = ngx_http_get_module_loc_conf(r, ngx_http_websocket_module);
 
     ctx->pingintvl = wlcf->pingintvl;
     ctx->idleintvl = wlcf->idleintvl;
@@ -653,7 +653,7 @@ ngx_http_ws_init_ctx(ngx_http_request_t *r)
             "websocket: pingintvl: %d, idleintvl: %d",
             ctx->pingintvl, ctx->idleintvl);
 
-    wslay_event_context_server_init(&wslay_ctx, &callbacks, ctx);
+    wslay_event_context_server_init(&wslay_ctx, &ws_callbacks, ctx);
 
     r->read_event_handler = ngx_http_ws_event_handler;
     ngx_http_set_ctx(r, ctx, ngx_http_websocket_module);
@@ -673,8 +673,8 @@ ngx_http_ws_send_push_token(ngx_http_ws_ctx_t *ctx)
     ngx_http_request_t *r = ctx->r;
     wslay_event_context_ptr wslay_ctx = ctx->ws;
 
-    ngx_http_core_srv_conf_t *cscf = r->srv_conf[ngx_http_core_module.ctx_index];
-    ngx_http_core_loc_conf_t *clcf = r->loc_conf[ngx_http_core_module.ctx_index];
+    ngx_http_core_srv_conf_t *cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
+    ngx_http_core_loc_conf_t *clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
     ngx_http_ws_srv_addr_t *push_addr;
     HASH_FIND_PTR(ws_srv_addr_hash, &cscf, push_addr);
