@@ -177,17 +177,15 @@ ngx_http_ws_recv_callback(wslay_event_context_ptr wslay_ctx, uint8_t *buf, size_
     ngx_http_request_t *r = ctx->r;
     ngx_connection_t  *c = r->connection;
 
-    ssize_t n = recv(c->fd, buf, len, 0);
-    if (n == -1) {
-        if(errno == EAGAIN || errno == EWOULDBLOCK) {
-            wslay_event_set_error(wslay_ctx, WSLAY_ERR_WOULDBLOCK);
-        } else {
-            wslay_event_set_error(wslay_ctx, WSLAY_ERR_CALLBACK_FAILURE);
-        }
-    } else if (n == 0) {
-        wslay_event_set_error(wslay_ctx, WSLAY_ERR_CALLBACK_FAILURE);
+    ssize_t n = ngx_recv(c, buf, len);
 
-        n = -1;
+    if (n == NGX_AGAIN) {
+        wslay_event_set_error(wslay_ctx, WSLAY_ERR_WOULDBLOCK);
+    } else if (n <= 0) {
+        if (n == 0) {
+            n = -1;
+        }
+        wslay_event_set_error(wslay_ctx, WSLAY_ERR_CALLBACK_FAILURE);
     }
 
     return n;
@@ -195,19 +193,18 @@ ngx_http_ws_recv_callback(wslay_event_context_ptr wslay_ctx, uint8_t *buf, size_
 
 static ssize_t
 ngx_http_ws_send_callback(wslay_event_context_ptr wslay_ctx,
-        const uint8_t *data, size_t len, int flags, void *user_data)
+        const uint8_t *buf, size_t len, int flags, void *user_data)
 {
     ngx_http_ws_ctx_t *ctx = user_data;
     ngx_http_request_t *r = ctx->r;
     ngx_connection_t  *c = r->connection;
 
-    ssize_t n = send(c->fd, data, len, 0);
-    if (n == -1) {
-        if(errno == EAGAIN || errno == EWOULDBLOCK) {
-            wslay_event_set_error(wslay_ctx, WSLAY_ERR_WOULDBLOCK);
-        } else {
-            wslay_event_set_error(wslay_ctx, WSLAY_ERR_CALLBACK_FAILURE);
-        }
+    ssize_t n = ngx_send(c, (uint8_t *) buf, len);
+
+    if (n == NGX_AGAIN) {
+        wslay_event_set_error(wslay_ctx, WSLAY_ERR_WOULDBLOCK);
+    } else {
+        wslay_event_set_error(wslay_ctx, WSLAY_ERR_CALLBACK_FAILURE);
     }
 
     return n;
@@ -475,7 +472,7 @@ static void
 ngx_http_ws_event_handler(ngx_http_request_t *r)
 {
     ngx_connection_t *c = r->connection;
-    ngx_http_ws_ctx_t *ctx = (ngx_http_ws_ctx_t *) ngx_http_get_module_ctx(r, ngx_http_websocket_module);
+    ngx_http_ws_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_websocket_module);
 
     if (c->read->ready) {
         wslay_event_recv(ctx->ws);
@@ -595,7 +592,7 @@ ngx_http_ws_timeout(ngx_event_t *ev)
 static ngx_int_t
 ngx_http_ws_handshake(ngx_http_request_t *r)
 {
-    r->count++; /* prevent nginx close connection after upgrade */
+    r->main->count++; /* prevent nginx close connection after upgrade */
     r->keepalive = 0;
 
     ngx_http_ws_send_handshake(r); /* TODO check send error */
